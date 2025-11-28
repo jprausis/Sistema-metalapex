@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { storageService } from '../services/storage';
+import { supabaseService } from '../services/supabaseService';
 import { generateBudgetPDF } from '../services/pdfGenerator';
 import { Budget, BudgetStatus, formatCurrency } from '../types';
 import { Link } from 'react-router-dom';
@@ -7,31 +7,46 @@ import { FileText, Plus, Search, Edit3, FileDown, Loader2 } from 'lucide-react';
 
 const BudgetList: React.FC = () => {
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
+  const loadBudgets = async () => {
+    try {
+      const data = await supabaseService.getBudgets();
+      setBudgets(data);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    setBudgets(storageService.getBudgets());
+    loadBudgets();
   }, []);
 
-  const handleStatusChange = (id: string, newStatus: string) => {
+  const handleStatusChange = async (id: string, newStatus: string) => {
     const updatedBudgets = budgets.map(b => 
       b.id === id ? { ...b, status: newStatus as BudgetStatus } : b
     );
     setBudgets(updatedBudgets);
-    storageService.saveBudgets(updatedBudgets);
+    try {
+        await supabaseService.updateBudgetStatus(id, newStatus);
+    } catch (error) {
+        console.error('Erro ao salvar status', error);
+    }
   };
 
   const filtered = budgets.filter(b => 
-    b.clientName.toLowerCase().includes(filter.toLowerCase()) || 
+    (b.clientName || '').toLowerCase().includes(filter.toLowerCase()) || 
     b.number.toLowerCase().includes(filter.toLowerCase())
-  ).reverse();
+  );
 
   const handleDownloadPdf = async (budget: Budget) => {
     setDownloadingId(budget.id);
     try {
-      // We need the full client object to generate the PDF
-      const clients = storageService.getClients();
+      const clients = await supabaseService.getClients();
       const client = clients.find(c => c.id === budget.clientId);
 
       if (client) {
@@ -57,6 +72,8 @@ const BudgetList: React.FC = () => {
       default: return 'bg-gray-100 text-gray-600 border-gray-200';
     }
   };
+
+  if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin text-[#F08736]" /></div>;
 
   return (
     <div className="space-y-6">

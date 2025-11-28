@@ -1,47 +1,65 @@
 import React, { useEffect, useState } from 'react';
-import { storageService } from '../services/storage';
+import { supabaseService } from '../services/supabaseService';
 import { Client } from '../types';
-import { Search, Plus, Edit2, Trash2 } from 'lucide-react';
+import { Search, Plus, Edit2, Trash2, Loader2 } from 'lucide-react';
 
 const Clients: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState<Partial<Client>>({
     address: { street: '', number: '', district: '', city: '', state: '', zip: '' }
   });
 
-  useEffect(() => {
-    setClients(storageService.getClients());
-  }, []);
-
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newClients = [...clients];
-    
-    if (editingClient) {
-      const index = newClients.findIndex(c => c.id === editingClient.id);
-      newClients[index] = { ...editingClient, ...formData as Client };
-    } else {
-      newClients.push({
-        ...formData as Client,
-        id: Date.now().toString(),
-      });
+  const loadClients = async () => {
+    try {
+      const data = await supabaseService.getClients();
+      setClients(data);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
     }
-
-    storageService.saveClients(newClients);
-    setClients(newClients);
-    closeModal();
   };
 
-  const handleDelete = (id: string) => {
+  useEffect(() => {
+    loadClients();
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    
+    try {
+      const payload = {
+        ...formData,
+        id: editingClient ? editingClient.id : undefined // Undefined pra criar novo (DB gera UUID)
+      };
+
+      await supabaseService.saveClient(payload as Client);
+      await loadClients();
+      closeModal();
+    } catch (error) {
+      alert('Erro ao salvar cliente');
+      console.error(error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
     if (confirm('Tem certeza que deseja remover este cliente?')) {
-      const newClients = clients.filter(c => c.id !== id);
-      storageService.saveClients(newClients);
-      setClients(newClients);
+      try {
+        await supabaseService.deleteClient(id);
+        setClients(clients.filter(c => c.id !== id));
+      } catch (error) {
+        alert('Erro ao deletar. Verifique se o cliente possui orçamentos.');
+      }
     }
   };
 
@@ -68,8 +86,10 @@ const Clients: React.FC = () => {
   const filteredClients = clients.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
     c.phone.includes(searchTerm) ||
-    c.document.includes(searchTerm)
+    (c.document && c.document.includes(searchTerm))
   );
+
+  if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin text-[#F08736]" /></div>;
 
   return (
     <div className="space-y-6">
@@ -112,7 +132,7 @@ const Clients: React.FC = () => {
               <p><span className="font-medium text-gray-800">Tel:</span> {client.phone}</p>
               <p><span className="font-medium text-gray-800">Email:</span> {client.email}</p>
               <p className="text-xs text-gray-400 truncate mt-2">
-                {client.address.street}, {client.address.number} - {client.address.city}
+                {client.address?.street}, {client.address?.number} - {client.address?.city}
               </p>
             </div>
           </div>
@@ -180,7 +200,10 @@ const Clients: React.FC = () => {
 
               <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-gray-200">
                 <button type="button" onClick={closeModal} className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Cancelar</button>
-                <button type="submit" className="px-4 py-2 text-white bg-[#F08736] rounded-lg hover:bg-[#d6762f] shadow-sm transition-colors">Salvar Cliente</button>
+                <button type="submit" disabled={saving} className="px-4 py-2 text-white bg-[#F08736] rounded-lg hover:bg-[#d6762f] shadow-sm transition-colors flex items-center">
+                  {saving && <Loader2 className="animate-spin mr-2" size={16} />}
+                  Salvar Cliente
+                </button>
               </div>
             </form>
           </div>

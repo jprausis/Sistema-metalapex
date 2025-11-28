@@ -1,43 +1,59 @@
 import React, { useEffect, useState } from 'react';
-import { storageService } from '../services/storage';
+import { supabaseService } from '../services/supabaseService';
 import { ServiceProduct, CalculationType, formatCurrency } from '../types';
-import { Plus, Edit2, Trash2, Tag } from 'lucide-react';
+import { Plus, Edit2, Trash2, Tag, Loader2 } from 'lucide-react';
 
 const Services: React.FC = () => {
   const [services, setServices] = useState<ServiceProduct[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceProduct | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const [formData, setFormData] = useState<Partial<ServiceProduct>>({});
 
-  useEffect(() => {
-    setServices(storageService.getServices());
-  }, []);
-
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newServices = [...services];
-    
-    if (editingService) {
-      const index = newServices.findIndex(s => s.id === editingService.id);
-      newServices[index] = { ...editingService, ...formData as ServiceProduct };
-    } else {
-      newServices.push({
-        ...formData as ServiceProduct,
-        id: Date.now().toString(),
-      });
+  const loadServices = async () => {
+    try {
+      const data = await supabaseService.getServices();
+      setServices(data);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
     }
-
-    storageService.saveServices(newServices);
-    setServices(newServices);
-    closeModal();
   };
 
-  const handleDelete = (id: string) => {
+  useEffect(() => {
+    loadServices();
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    
+    try {
+        const payload = {
+            ...formData,
+            id: editingService ? editingService.id : undefined
+        };
+        await supabaseService.saveService(payload as ServiceProduct);
+        await loadServices();
+        closeModal();
+    } catch (error) {
+        alert('Erro ao salvar serviço');
+    } finally {
+        setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
     if (confirm('Remover este serviço?')) {
-      const newServices = services.filter(s => s.id !== id);
-      storageService.saveServices(newServices);
-      setServices(newServices);
+      try {
+        await supabaseService.deleteService(id);
+        setServices(services.filter(s => s.id !== id));
+      } catch (error) {
+          alert('Erro ao deletar serviço.');
+      }
     }
   };
 
@@ -58,6 +74,8 @@ const Services: React.FC = () => {
     setIsModalOpen(false);
     setEditingService(null);
   };
+
+  if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin text-[#F08736]" /></div>;
 
   return (
     <div className="space-y-6">
@@ -152,7 +170,10 @@ const Services: React.FC = () => {
 
               <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-gray-200">
                 <button type="button" onClick={closeModal} className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Cancelar</button>
-                <button type="submit" className="px-4 py-2 text-white bg-[#F08736] rounded-lg hover:bg-[#d6762f] shadow-sm transition-colors">Salvar Serviço</button>
+                <button type="submit" disabled={saving} className="px-4 py-2 text-white bg-[#F08736] rounded-lg hover:bg-[#d6762f] shadow-sm transition-colors flex items-center">
+                  {saving && <Loader2 className="animate-spin mr-2" size={16} />}
+                  Salvar Serviço
+                </button>
               </div>
             </form>
           </div>

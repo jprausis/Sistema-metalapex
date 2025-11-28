@@ -1,22 +1,42 @@
 import React, { useEffect, useState } from 'react';
-import { storageService } from '../services/storage';
+import { supabaseService } from '../services/supabaseService';
 import { Budget, BudgetStatus, formatCurrency } from '../types';
-import { DollarSign, FileClock, CheckCircle, Clock } from 'lucide-react';
+import { DollarSign, FileClock, CheckCircle, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const Dashboard: React.FC = () => {
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadData = async () => {
+    try {
+      const data = await supabaseService.getBudgets();
+      setBudgets(data);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    setBudgets(storageService.getBudgets());
+    loadData();
   }, []);
 
-  const handleStatusChange = (id: string, newStatus: string) => {
+  const handleStatusChange = async (id: string, newStatus: string) => {
+    // Optimistic update
+    const previousBudgets = [...budgets];
     const updatedBudgets = budgets.map(b => 
       b.id === id ? { ...b, status: newStatus as BudgetStatus } : b
     );
     setBudgets(updatedBudgets);
-    storageService.saveBudgets(updatedBudgets);
+
+    try {
+      await supabaseService.updateBudgetStatus(id, newStatus);
+    } catch (error) {
+      alert('Erro ao atualizar status');
+      setBudgets(previousBudgets); // Rollback
+    }
   };
 
   // Pending includes Sent, Follow-up, and Visit Scheduled
@@ -54,6 +74,10 @@ const Dashboard: React.FC = () => {
       default: return 'bg-gray-100 text-gray-700 border-gray-200';
     }
   };
+
+  if (loading) {
+      return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin text-[#F08736]" size={40} /></div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -115,7 +139,7 @@ const Dashboard: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                budgets.slice().reverse().slice(0, 5).map((budget) => (
+                budgets.slice(0, 8).map((budget) => (
                   <tr key={budget.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 font-medium text-gray-900">{budget.number}</td>
                     <td className="px-6 py-4">{budget.clientName}</td>

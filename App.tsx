@@ -1,5 +1,5 @@
 import React from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Clients from './pages/Clients';
@@ -41,7 +41,8 @@ const AppRoutes = () => {
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <Router>
+      {/* O basename diz ao React Router que todas as rotas começam após /sistema */}
+      <Router basename="/sistema">
         <AppRoutes />
       </Router>
     </AuthProvider>

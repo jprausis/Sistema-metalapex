@@ -1,52 +1,100 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User } from '../types';
-import { storageService } from '../services/storage';
+import { User, UserRole } from '../types';
+import { supabase } from '../lib/supabase';
+import { Session } from '@supabase/supabase-js';
 
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   isAuthenticated: boolean;
+  isLoading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check for active session
-    const storedUser = localStorage.getItem('ma_session_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
+    // 1. Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session?.user) {
+        fetchProfile(session.user.id, session.user.email!);
+      } else {
+        setIsLoading(false);
+      }
+    });
+
+    // 2. Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session?.user) {
+        fetchProfile(session.user.id, session.user.email!);
+      } else {
+        setUser(null);
+        setIsLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500));
+  const fetchProfile = async (userId: string, email: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
 
-    const users = storageService.getUsers();
-    const foundUser = users.find(u => u.email === email && u.password === password && u.active);
-
-    if (foundUser) {
-      // Don't store password in session for safety (even though it's local)
-      const { password, ...safeUser } = foundUser; 
-      setUser(safeUser as User);
-      localStorage.setItem('ma_session_user', JSON.stringify(safeUser));
-      return true;
+      if (error) {
+        // Se não existir perfil (ex: primeiro login), cria um temporário na memória
+        // O Trigger do banco deve criar automaticamente, mas caso falhe:
+        console.warn('Perfil não encontrado, usando dados básicos', error);
+        setUser({
+          id: userId,
+          email: email,
+          name: email.split('@')[0],
+          role: UserRole.SELLER,
+          active: true
+        });
+      } else {
+        setUser(data as User);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsLoading(false);
     }
-
-    return false;
   };
 
-  const logout = () => {
+  const login = async (email: string, password: string): Promise<boolean> => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      console.error('Login error:', error.message);
+      return false;
+    }
+    return true;
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('ma_session_user');
+    setSession(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { storageService } from '../services/storage';
+import { supabaseService } from '../services/supabaseService';
 import { generateBudgetPDF } from '../services/pdfGenerator';
 import { Budget, BudgetItem, Client, ServiceProduct, CalculationType, BudgetStatus, formatCurrency } from '../types';
-import { ChevronRight, ChevronLeft, Save, FileDown, Plus, Trash2, Search } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Save, FileDown, Plus, Trash2, Search, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const BudgetEditor: React.FC = () => {
@@ -11,7 +11,8 @@ const BudgetEditor: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [step, setStep] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   
   // State lifted from StepClient
   const [clientSearch, setClientSearch] = useState('');
@@ -37,28 +38,40 @@ const BudgetEditor: React.FC = () => {
 
   // Load Initial Data
   useEffect(() => {
-    setClients(storageService.getClients());
-    setServices(storageService.getServices());
+    const fetchData = async () => {
+        try {
+            const [fetchedClients, fetchedServices] = await Promise.all([
+                supabaseService.getClients(),
+                supabaseService.getServices()
+            ]);
+            setClients(fetchedClients);
+            setServices(fetchedServices);
 
-    if (id) {
-      const allBudgets = storageService.getBudgets();
-      const existing = allBudgets.find(b => b.id === id);
-      if (existing) {
-        setBudget(existing);
-        if (existing.clientName) setClientSearch(existing.clientName);
-      }
-    } else {
-      // New Budget
-      const allBudgets = storageService.getBudgets();
-      setBudget(prev => ({
-        ...prev,
-        number: storageService.generateBudgetNumber(allBudgets),
-        createdAt: new Date().toISOString(),
-        validUntil: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(), // +20 days
-        responsibleName: user?.name || '',
-        responsibleId: user?.id || ''
-      }));
-    }
+            if (id) {
+                const existing = await supabaseService.getBudgetById(id);
+                if (existing) {
+                    setBudget(existing);
+                    if (existing.clientName) setClientSearch(existing.clientName);
+                }
+            } else {
+                // New Budget
+                const newNumber = await supabaseService.generateBudgetNumber();
+                setBudget(prev => ({
+                    ...prev,
+                    number: newNumber,
+                    createdAt: new Date().toISOString(),
+                    validUntil: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(),
+                    responsibleName: user?.name || '',
+                    responsibleId: user?.id || ''
+                }));
+            }
+        } catch (error) {
+            console.error('Error loading data', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+    fetchData();
   }, [id, user]);
 
   // Calculations
@@ -122,34 +135,33 @@ const BudgetEditor: React.FC = () => {
     setBudget(prev => ({ ...prev, items: newItems }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!budget.clientId) return alert('Selecione um cliente');
     if (!budget.items?.length) return alert('Adicione pelo menos um item');
-
-    const allBudgets = storageService.getBudgets();
-    let updatedBudgets = [...allBudgets];
-
-    if (id) {
-      const idx = updatedBudgets.findIndex(b => b.id === id);
-      updatedBudgets[idx] = budget as Budget;
-    } else {
-      updatedBudgets.push({ ...budget, id: Date.now().toString() } as Budget);
+    
+    setSaving(true);
+    try {
+        await supabaseService.saveBudget(budget);
+        alert('Orçamento salvo com sucesso!');
+        navigate('/budgets');
+    } catch (error) {
+        console.error(error);
+        alert('Erro ao salvar orçamento. Verifique o console.');
+    } finally {
+        setSaving(false);
     }
-
-    storageService.saveBudgets(updatedBudgets);
-    alert('Orçamento salvo com sucesso!');
-    navigate('/budgets');
   };
 
   const handlePrint = async () => {
     if (!budget.clientId) return;
     const client = clients.find(c => c.id === budget.clientId);
     if (client && budget.items) {
-      setLoading(true);
+      // Small loader just for this action
       await generateBudgetPDF(budget as Budget, client);
-      setLoading(false);
     }
   };
+
+  if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin text-[#F08736]" /></div>;
 
   return (
     <div className="max-w-5xl mx-auto pb-20">
@@ -214,7 +226,7 @@ const BudgetEditor: React.FC = () => {
                 >
                   <h3 className="font-bold text-gray-800">{client.name}</h3>
                   <p className="text-sm text-gray-500">{client.document}</p>
-                  <p className="text-sm text-gray-600 mt-1">{client.address.city} - {client.address.state}</p>
+                  <p className="text-sm text-gray-600 mt-1">{client.address?.city} - {client.address?.state}</p>
                 </div>
               ))}
             </div>
@@ -467,17 +479,19 @@ const BudgetEditor: React.FC = () => {
              {id && (
                <button 
                  onClick={handlePrint} 
-                 disabled={loading}
+                 disabled={saving}
                  className="flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
                >
-                 <FileDown size={18} className="mr-2" /> {loading ? 'Gerando...' : 'PDF'}
+                 <FileDown size={18} className="mr-2" /> PDF
                </button>
              )}
              <button 
                onClick={handleSave} 
-               className="flex items-center px-6 py-2 bg-[#F08736] text-white rounded-lg hover:bg-[#d6762f] shadow-md font-medium"
+               disabled={saving}
+               className="flex items-center px-6 py-2 bg-[#F08736] text-white rounded-lg hover:bg-[#d6762f] shadow-md font-medium disabled:opacity-50"
              >
-               <Save size={18} className="mr-2" /> Salvar Orçamento
+               {saving ? <Loader2 className="animate-spin mr-2" size={18} /> : <Save size={18} className="mr-2" />}
+               Salvar Orçamento
              </button>
           </div>
         </div>
